@@ -2,8 +2,8 @@
 
 Sound is enabled for new visitors. A saved preference in localStorage takes
 precedence. The controller synthesizes several short effects with the Web Audio
-API; those effects do not need audio files. Missing optional recordings are
-handled gracefully.
+API; those effects do not need audio files. If an optional recording is absent
+or cannot play, its interaction uses a synthesized Web Audio fallback.
 
 ## Synthesized in the browser
 
@@ -23,10 +23,10 @@ prevent the app from working.
 
 | File | Used for | Status |
 | --- | --- | --- |
-| `fortune-rattle.mp3` | Bamboo/wooden fortune sticks shaking during draw | Missing |
-| `paper-slide.mp3` | Fortune paper sliding out | Missing |
-| `paper-ignition.mp3` | Burning ignition | Missing |
-| `fire-crackle-loop.mp3` | Fire sound during burning | Missing |
+| `fortune-rattle.mp3` | Bamboo/wooden fortune sticks shaking during draw | Missing; irregular wooden tap loop fallback |
+| `paper-slide.mp3` | Fortune paper sliding out | Missing; filtered paper-like noise sweep fallback |
+| `paper-ignition.mp3` | Burning ignition | Missing; rising filtered-noise ignition fallback |
+| `fire-crackle-loop.mp3` | Fire sound during burning | Missing; low-volume irregular crackle fallback |
 | `nezha-voice.mp3` | User-provided Nezha voice line | Installed |
 
 The Nezha voice line was supplied by the site owner and is included at

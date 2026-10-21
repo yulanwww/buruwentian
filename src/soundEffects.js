@@ -20,6 +20,8 @@ export function readSoundPreference() {
 export function createSoundController() {
   const players = new Map()
   const fades = new Map()
+  const fallbackLoops = new Map()
+  const playerGenerations = new Map()
   const activeSources = new Set()
   let context = null
   let masterGain = null
@@ -28,6 +30,7 @@ export function createSoundController() {
   let lastClickAt = 0
   let voiceActive = false
   let activeVoiceErrorHandler = null
+  let resumePromise = null
 
   function setVoiceActive(value) {
     voiceActive = value
@@ -71,6 +74,9 @@ export function createSoundController() {
 
   async function resumeContext(audioContext) {
     if (!audioContext) return false
+    if (audioContext.state === 'running') return true
+    if (resumePromise) return resumePromise
+    resumePromise = (async () => {
     try {
       if (audioContext.state === 'suspended') await audioContext.resume()
       const resumed = audioContext.state === 'running'
@@ -80,6 +86,12 @@ export function createSoundController() {
     } catch (error) {
       console.error(`[sound] AudioContext resume failed: state=${audioContext.state}`, error)
       return false
+    }
+    })()
+    try {
+      return await resumePromise
+    } finally {
+      resumePromise = null
     }
   }
 
@@ -191,6 +203,111 @@ export function createSoundController() {
     scheduleTone(audioContext, pitch * 5.43, {
       startAt, duration: 0.27, level: 0.004 * brightness,
     })
+  }
+
+  // These four local recordings are optional. Keep their normal file playback,
+  // but give each a Web Audio equivalent so missing files never mean silence.
+  function playNoiseSweep(audioContext, {
+    duration = 0.35, level = 0.06, startFrequency = 500,
+    endFrequency = 2400, filterType = 'lowpass', q = 0.7,
+  } = {}) {
+    const startAt = audioContext.currentTime
+    const source = audioContext.createBufferSource()
+    const filter = audioContext.createBiquadFilter()
+    const envelope = audioContext.createGain()
+    source.buffer = makeNoiseBuffer(audioContext)
+    source.loop = true
+    filter.type = filterType
+    filter.Q.setValueAtTime(q, startAt)
+    filter.frequency.setValueAtTime(startFrequency, startAt)
+    filter.frequency.exponentialRampToValueAtTime(endFrequency, startAt + duration * 0.75)
+    envelope.gain.setValueAtTime(0.0001, startAt)
+    envelope.gain.exponentialRampToValueAtTime(level, startAt + Math.min(0.04, duration * 0.2))
+    envelope.gain.exponentialRampToValueAtTime(0.0001, startAt + duration)
+    source.connect(filter)
+    filter.connect(envelope)
+    envelope.connect(masterGain)
+    source.onended = () => {
+      activeSources.delete(source)
+      source.disconnect()
+      filter.disconnect()
+      envelope.disconnect()
+    }
+    activeSources.add(source)
+    source.start(startAt)
+    source.stop(startAt + duration + 0.01)
+    return source
+  }
+
+  function startFallbackLoop(name) {
+    if (fallbackLoops.has(name)) return
+    const interval = name === 'rattle' ? 112 : 145
+    const tick = () => {
+      if (!enabled || !context || context.state !== 'running') return
+      if (name === 'rattle') {
+        playWoodTap(context, {
+          pitch: 145 + Math.random() * 100,
+          level: 0.035 + Math.random() * 0.035,
+        })
+        if (Math.random() > 0.48) {
+          window.setTimeout(() => {
+            if (enabled && context?.state === 'running') {
+              playWoodTap(context, { pitch: 170 + Math.random() * 90, level: 0.025 })
+            }
+          }, 28 + Math.random() * 35)
+        }
+      } else {
+        playNoiseSweep(context, {
+          duration: 0.055 + Math.random() * 0.09,
+          level: 0.012 + Math.random() * 0.018,
+          startFrequency: 650 + Math.random() * 850,
+          endFrequency: 1200 + Math.random() * 1100,
+          filterType: 'bandpass',
+          q: 0.45,
+        })
+      }
+    }
+    tick()
+    const timer = window.setInterval(tick, interval)
+    fallbackLoops.set(name, timer)
+    console.info(`[sound] synthesized fallback loop started: name=${name}; context=${context?.state}`)
+  }
+
+  function stopFallbackLoop(name) {
+    const timer = fallbackLoops.get(name)
+    if (timer === undefined) return
+    window.clearInterval(timer)
+    fallbackLoops.delete(name)
+    console.info(`[sound] synthesized fallback loop stopped: name=${name}`)
+  }
+
+  async function playFallback(name, { loop = false, onEnded } = {}) {
+    if (!enabled) return
+    const audioContext = ensureContext()
+    if (!audioContext || !(await resumeContext(audioContext)) || !enabled) return
+    try {
+      if (name === 'rattle' || name === 'fire') {
+        if (loop) startFallbackLoop(name)
+        else if (name === 'rattle') {
+          playWoodTap(audioContext, { pitch: 165, level: 0.055 })
+          playWoodTap(audioContext, { pitch: 218, delay: 0.09, level: 0.045 })
+        } else playNoiseSweep(audioContext, { duration: 0.55, level: 0.035, startFrequency: 650, endFrequency: 1250, filterType: 'bandpass' })
+        console.info(`[sound] synthesized file fallback scheduled: name=${name}; context=${audioContext.state}`)
+        return
+      }
+      if (name === 'paperSlide') {
+        const source = playNoiseSweep(audioContext, { duration: 0.38, level: 0.047, startFrequency: 420, endFrequency: 3200, filterType: 'bandpass', q: 0.55 })
+        source.addEventListener('ended', onEnded, { once: true })
+      } else if (name === 'ignition') {
+        const source = playNoiseSweep(audioContext, { duration: 0.46, level: 0.085, startFrequency: 380, endFrequency: 2100, filterType: 'lowpass', q: 0.65 })
+        playWoodTap(audioContext, { pitch: 92, level: 0.045 })
+        source.addEventListener('ended', onEnded, { once: true })
+      }
+      console.info(`[sound] synthesized file fallback scheduled: name=${name}; context=${audioContext.state}`)
+    } catch (error) {
+      console.error(`[sound] synthesized file fallback failed: name=${name}; context=${audioContext.state}`, error)
+      onEnded?.()
+    }
   }
 
   async function playSynth(name) {
@@ -341,11 +458,14 @@ export function createSoundController() {
     const player = getPlayer(name)
     if (!player) {
       const error = new Error(`Audio player unavailable for ${name}`)
-      if (onError) onError(error)
+      if (name !== 'nezha' && fileTracks[name]) void playFallback(name, { loop, onEnded })
+      else if (onError) onError(error)
       else onEnded?.()
       return
     }
 
+    const generation = (playerGenerations.get(name) ?? 0) + 1
+    playerGenerations.set(name, generation)
     cancelFade(name)
     player.pause()
     try { player.currentTime = 0 } catch { /* Media metadata may not be loaded yet. */ }
@@ -355,7 +475,7 @@ export function createSoundController() {
 
     let continued = false
     const continueOnce = (outcome, error) => {
-      if (continued) return
+      if (continued || playerGenerations.get(name) !== generation) return
       continued = true
       player.onended = null
       player.onerror = null
@@ -365,8 +485,10 @@ export function createSoundController() {
       }
       if (outcome === 'ended') onEnded?.()
       else {
-        onError?.(error)
-        if (!onError) onEnded?.()
+        console.warn(`[sound] using synthesized fallback after file failure: name=${name}`, error)
+        if (name !== 'nezha') void playFallback(name, { loop, onEnded })
+        else if (onError) onError(error)
+        else onEnded?.()
       }
     }
 
@@ -399,6 +521,8 @@ export function createSoundController() {
   }
 
   function stop(name, fadeMs = 0) {
+    stopFallbackLoop(name)
+    playerGenerations.set(name, (playerGenerations.get(name) ?? 0) + 1)
     const player = players.get(name)
     if (!player) {
       if (name === 'nezha') setVoiceActive(false)
@@ -458,6 +582,7 @@ export function createSoundController() {
   }
 
   function stopAll() {
+    for (const name of [...fallbackLoops.keys()]) stopFallbackLoop(name)
     for (const name of players.keys()) stop(name)
     stopSynths()
   }
@@ -495,6 +620,9 @@ export function createSoundController() {
         player.load()
       }
       players.clear()
+      playerGenerations.clear()
+      for (const timer of fallbackLoops.values()) window.clearInterval(timer)
+      fallbackLoops.clear()
       if (context && context.state !== 'closed') context.close().catch(() => {})
       context = null
       masterGain = null
