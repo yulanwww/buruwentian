@@ -77,16 +77,16 @@ export function createSoundController() {
     if (audioContext.state === 'running') return true
     if (resumePromise) return resumePromise
     resumePromise = (async () => {
-    try {
-      if (audioContext.state === 'suspended') await audioContext.resume()
-      const resumed = audioContext.state === 'running'
-      console.info(`[sound] AudioContext resume check: state=${audioContext.state}; muted=${!enabled}`)
-      if (!resumed) console.warn(`[sound] AudioContext is not running (state=${audioContext.state}); playback may be blocked`)
-      return resumed
-    } catch (error) {
-      console.error(`[sound] AudioContext resume failed: state=${audioContext.state}`, error)
-      return false
-    }
+      try {
+        if (audioContext.state === 'suspended') await audioContext.resume()
+        const resumed = audioContext.state === 'running'
+        console.info(`[sound] AudioContext resume check: state=${audioContext.state}; muted=${!enabled}`)
+        if (!resumed) console.warn(`[sound] AudioContext is not running (state=${audioContext.state}); playback may be blocked`)
+        return resumed
+      } catch (error) {
+        console.error(`[sound] AudioContext resume failed: state=${audioContext.state}`, error)
+        return false
+      }
     })()
     try {
       return await resumePromise
@@ -522,9 +522,9 @@ export function createSoundController() {
 
   function stop(name, fadeMs = 0) {
     stopFallbackLoop(name)
-    playerGenerations.set(name, (playerGenerations.get(name) ?? 0) + 1)
     const player = players.get(name)
     if (!player) {
+      playerGenerations.set(name, (playerGenerations.get(name) ?? 0) + 1)
       if (name === 'nezha') setVoiceActive(false)
       return
     }
@@ -541,8 +541,11 @@ export function createSoundController() {
       setVoiceActive(false)
       try { player.currentTime = 0 } catch { /* No-op if metadata is unavailable. */ }
       onVoiceStopped?.(new Error('Nezha voice playback stopped before ending'))
+      playerGenerations.set(name, (playerGenerations.get(name) ?? 0) + 1)
       return
     }
+
+    playerGenerations.set(name, (playerGenerations.get(name) ?? 0) + 1)
 
     if (!fadeMs || player.paused) {
       player.pause()
